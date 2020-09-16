@@ -1,0 +1,305 @@
+<!---/********************************************************
+##########################################################################
+# drive.html
+# License: MIT
+# Original Author:  Dave Barrett, mentor team 5109
+# Contributors:
+# Purpose: To implement a simple flask interface
+#    which operates the team 5109 'Tinybot'
+#    This gives us manual drive capabilities
+#    and a simple interface for teleoperation
+#    in some very easy to understand code.
+# TL;DR: Drive a bot from a web interface
+##########################################################################
+# Copyright 2020 Johns Creek Gladiator Robotics
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files 
+# (the "Software"), to deal in the Software without restriction, 
+# including without limitation the rights to use, copy, modify, merge,
+# publish, distribute, sublicense, and/or sell copies of the Software,
+# and to permit persons to whom the Software is furnished to do so, 
+# subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be 
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, 
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF 
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. 
+# IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+# CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+# TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+# SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+##########################################################################
+
+Here's the basic drift.  There's not much html here.  Just a slider and a
+few readouts from the sensors (bumpers, distance).  All it does is report
+sensor status, and wait for user input (keyboard) to tell it what to do.
+When it gets a command, it sends it back to the python flask with a
+url (i.e. '/right' or '/forward') which is blind to the browser
+because nothing is returned and you don't leave this page.  
+
+************************************************************/--->
+
+<!DOCTYPE html>
+<html>
+<body>
+<p id="demo"></p>
+<p>Use Arrow Keys to Drive</p>
+<p>Y = <b id='Y'>STOP</b> </p> 
+<p>X = <b id='X'>STRAIGHT</b> </p> 
+<p>PWM = <b id='speed'>0</b>% </p> 
+
+<br><br>
+<font size=+3>Bot Speed</font>
+<style>
+  .slider-wrapper {
+  display: inline-block;
+  width: 20px;
+  height: 150px;
+  padding: 0;
+}
+
+.slider-wrapper input {
+  width: 150px;
+  height: 20px;
+  margin: 0;
+  transform-origin: 75px 75px;
+  transform: rotate(-90deg);
+}
+</style>
+<div class="slider-wrapper">
+  <input type="range" min="0" max="100" value="70" step="1" id="botrange" onmouseup="mouseUp()">
+</div>
+
+<div>
+  <img src = 'https://images-na.ssl-images-amazon.com/images/I/41rtwpO9McL.jpg', width = '100', height = '100'></img> 
+  <img src = 'https://static.thenounproject.com/png/1384177-200.png', width = '100', height = '100'></img>
+  
+</div>
+<div>
+  <img src = 'https://www.iconfinder.com/data/icons/material-design-10/48/25-512.png', width = '100', height = '100'></img> 
+  <img src = 'https://images-na.ssl-images-amazon.com/images/I/41rtwpO9McL.jpg', width = '100', height = '100'></img> 
+  <img src = 'https://www.iconfinder.com/data/icons/basics-1/100/Next-512.png', width = '100', height = '100'></img>
+</div>
+<div>
+  <img src = 'https://images-na.ssl-images-amazon.com/images/I/41rtwpO9McL.jpg', width = '100', height = '100'></img> 
+  
+  <img src = 'https://www.iconfinder.com/data/icons/basics-1/100/Down-512.png', width = '100', height = '100'></img>
+</div>
+Distance:<b id='DISTANCE'>0</b> Bumpers:<b id='BUMPERS'>0</b>
+<center>
+<img src="http://73.54.187.139:8080/?action=stream" />
+</center>
+</body>
+</html>
+
+
+<!--- Now, on to the javascript--->
+
+<script src="{{url_for('static', filename='js/jquery.min.js')}}"></script>
+
+<script>
+
+
+//Following tells the browser to run the 'Player' script every 100ms
+window.setInterval(Player, 100);
+
+botSpeed=0;
+//something to handle the slider
+var slider = document.getElementById("botrange");
+var output = document.getElementById("speed");
+output.innerHTML = slider.value; // Display the default slider value
+botSpeed=slider.value;
+// Update the current slider value (each time you drag the slider handle)
+slider.oninput = function() {
+  output.innerHTML = this.value;
+  
+}
+
+//Updates our Flask app with whatever you set the slider to.
+// This way we can set the pwm duty cycle.  It calls the /speed url
+// followed by the slider setting so as an example:
+// /speed?data=70
+function mouseUp() {
+  var sliderPoint = document.getElementById("botrange");
+  speedVal=sliderPoint.value;
+  $.ajax({
+    type : 'GET',
+    url : "{{url_for('speed')}}",
+    contentType: 'application/json;charset=UTF-8',
+    data : {'data':speedVal}
+  });
+}
+
+//Javaskript helper.  Key holds the state of the control keys, which
+// in this case is just the arrow keys identified by keycode.  Updated
+// by the eventListener just below
+var Key = {
+  _pressed: {},
+
+  LEFT: 37,
+  UP: 38,
+  RIGHT: 39,
+  DOWN: 40,
+  
+  isDown: function(keyCode) {
+    return this._pressed[keyCode];
+  },
+  onKeydown: function(event) {
+    this._pressed[event.keyCode] = true;
+  },  
+  onKeyup: function(event) {
+    delete this._pressed[event.keyCode];
+  }
+};
+
+// Here's where we set something to watch for keys being pressed, which instantly
+// changes the state of Key
+window.addEventListener('keyup', function(event) { Key.onKeyup(event); }, false);
+window.addEventListener('keydown', function(event) { Key.onKeydown(event); }, false);
+
+//Yes, globals.  Sorry.
+// First what direction are we going?
+X="STRAIGHT";
+Y="STOP";
+OldY="STOP";
+OldX="STRAIGHT";
+
+//Next, flags so we only send the json request one time on change
+forwardStopFlag=1;
+leftRightStopFlag=1;
+
+
+// function Player- as discussed, runs every 100ms.  Looks up what keys are pressed and
+// takes appropriate action- like running the python function and updating
+// the status in the browser.  Special cases are taken when two keys are pressed
+// at the same time, and there's a few flags to remember your state (forwardStopflag
+// and leftRightStopFlag) so we don't have to make an ajax call back to our
+// python flask every 100ms, only when we make a change.
+// special cases are made for when you're holding a forward (or reverse) key and ALSO
+// hit a left or right key
+
+function Player() {
+  if (Key.isDown(Key.UP)||mouseIsPressed() && mousePosX >= 100 && mousePosX <= 200 && mousePosY >= 367 && mousePosY <= 467){
+  	Y = "FORWARD";
+  } 
+  else if (Key.isDown(Key.DOWN||mouseIsPressed() && mousePosX >= 100 && mousePosX <= 200 && mousePosY >= 567 && mousePosY <= 667)){
+  	Y= "REVERSE";
+  } 
+  else {
+    	Y="STOP"
+  }
+  if (Key.isDown(Key.LEFT||mouseIsPressed() && mousePosX >= 0 && mousePosX <= 100 && mousePosY >= 467 && mousePosY <= 567)) {
+  	X= "LEFT";
+  } 
+  else if (Key.isDown(Key.RIGHT||mouseIsPressed() && mousePosX >= 200 && mousePosX <= 300 && mousePosY >= 467 && mousePosY <= 567)) {
+  	X= "RIGHT";
+  } 
+  else {
+  	X="STRAIGHT"
+  }
+  Drive();
+  Bumpers();
+  Distance();
+}
+
+
+function Distance(){
+  $.getJSON('/distance',
+    function(data){
+      document.getElementById('DISTANCE').innerHTML = data;
+    })
+
+
+}
+
+function Bumpers(){
+  $.getJSON('/bumpers',
+    function(data){
+      document.getElementById('BUMPERS').innerHTML = data;
+    })
+
+
+}
+
+// function Drive- takes either the Player or the button state and
+// figures out what to do
+
+function Drive() {
+  if (OldX != X || OldY != Y){
+    switch (Y) {
+      case "FORWARD":
+        if (X=="STRAIGHT"){
+          $.getJSON('/forward',
+            function(data) {
+          //do nothing
+          });
+        }
+        if (X=="LEFT"){
+          $.getJSON('/fleft',
+            function(data) {
+          //do nothing
+          });
+        }
+        if (X=="RIGHT"){
+          $.getJSON('/fright',
+            function(data) {
+          //do nothing
+          });
+        }
+        break;
+      case "REVERSE":
+        if (X=="STRAIGHT"){
+          $.getJSON('/backward',
+            function(data) {
+          //do nothing
+          });
+        }
+        if (X=="LEFT"){
+          $.getJSON('/bleft',
+            function(data) {
+          //do nothing
+          });
+        }
+        if (X=="RIGHT"){
+          $.getJSON('/bright',
+            function(data) {
+          //do nothing
+          });
+        }
+        break;
+      case "STOP":
+        if (X=="STRAIGHT"){
+          $.getJSON('/stop',
+            function(data) {
+          //do nothing
+          });
+        }
+        if (X=="LEFT"){
+          $.getJSON('/left',
+            function(data) {
+          //do nothing
+          });
+        }
+        if (X=="RIGHT"){
+          $.getJSON('/right',
+            function(data) {
+          //do nothing
+          });
+        }
+        break;
+    }
+  }
+
+  //now remember what keys were down this time, so we don't resend
+  //the same request is it hasn't changed next time.
+  OldX=X;
+  OldY=Y;
+
+      
+  //Finally, report what we're doing
+  document.getElementById('Y').innerHTML = Y;
+  document.getElementById('X').innerHTML = X;
+};
+</script>
